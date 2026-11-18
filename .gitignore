@@ -1,0 +1,15 @@
+results/*
+!results/.gitkeep
+__pycache__/
+*.pyc
+.DS_Store
+report/build/
+report/*.aux
+report/*.log
+report/*.out
+report/*.blg
+report/*.bbl
+report/main.pdf
+report/HW3_Presentation_Team3.pptx
+report/HW3_Report_Team3.docx
+report/HW3_Report_Team3.pdf

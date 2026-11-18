@@ -1,0 +1,40 @@
+<?xml version="1.0"?>
+<!-- Configuration for HMasters and RegionServers -->
+<configuration>
+  <property>
+    <name>hbase.cluster.distributed</name>
+    <value>true</value>
+  </property>
+  <property>
+    <name>hbase.rootdir</name>
+    <value>hdfs://namenode:8020/hbase</value>
+  </property>
+  <property>
+    <name>hbase.zookeeper.quorum</name>
+    <value>zk1,zk2,zk3</value>
+  </property>
+
+  <!-- use the hostname the RegionServer reports (Docker reverse DNS adds ".hw3net") -->
+  <property>
+    <name>hbase.unsafe.regionserver.hostname.disable.master.reversedns</name>
+    <value>true</value>
+  </property>
+
+  <!-- a RegionServer is declared dead when its ZooKeeper session expires (default 90 s) -->
+  <property>
+    <name>zookeeper.session.timeout</name>
+    <value>10000</value>
+  </property>
+
+  <!-- secondary region replicas receive the primary's edits through async WAL replication -->
+  <property>
+    <name>hbase.region.replica.replication.enabled</name>
+    <value>true</value>
+  </property>
+
+  <!-- with 3 DataNodes there is no spare node to swap into a broken write pipeline -->
+  <property>
+    <name>dfs.client.block.write.replace-datanode-on-failure.best-effort</name>
+    <value>true</value>
+  </property>
+</configuration>

@@ -1,0 +1,15 @@
+digraph SCP {
+  graph [rankdir=TB, nodesep=0.2, ranksep=0.22, fontname="Helvetica"];
+  node [shape=box, style="rounded,filled", fillcolor="#3c78d8", color="#2a5aa8", fontcolor=white, fontname="Helvetica", fontsize=10, width=3.0];
+  edge [color="#555555", arrowsize=0.6];
+  a [label="RegionServer process dies (t0)", fillcolor="#444b55"];
+  b [label="ZooKeeper: session expires (t0 + timeout)\nephemeral /hbase/rs/<server> deleted", fillcolor="#1f2430"];
+  c [label="HMaster: watcher fires → ServerCrashProcedure"];
+  d [label="hbase:meta on dead server?\nyes → split meta WAL, reassign meta first"];
+  e [label="rename WAL dir to *-splitting\nHDFS recoverLease on each WAL  (FENCING)", fillcolor="#c0392b", color="#962d22"];
+  f [label="split WAL entries per region\n→ recovered.edits files"];
+  g [label="assign regions to live RegionServers\n(update hbase:meta)"];
+  h [label="new owner replays recovered.edits,\nflushes, opens region → serving"];
+  i [label="client: NotServingRegion / timeout\n→ re-lookup in meta → retry succeeds", fillcolor="#444b55"];
+  a -> b -> c -> d -> e -> f -> g -> h -> i;
+}

@@ -1,0 +1,17 @@
+digraph W {
+  graph [rankdir=LR, nodesep=0.25, ranksep=0.35, fontname="Helvetica"];
+  node [shape=box, style="rounded,filled", fillcolor="#3c78d8", color="#2a5aa8", fontcolor=white, fontname="Helvetica", fontsize=11];
+  edge [fontname="Helvetica", fontsize=9, color="#555555"];
+  c [label="Client", fillcolor="#444b55"];
+  rs [label="Primary\nRegionServer"];
+  wal [label="WAL on HDFS\n(DN1→DN2→DN3)", fillcolor="#1f2430"];
+  ms [label="MemStore\n(sorted, RAM)"];
+  hf [label="HFile on HDFS\n(after flush)", fillcolor="#1f2430"];
+  sec [label="Secondary\nreplicas", fillcolor="#7aa3e5"];
+  c -> rs [label="1 put"];
+  rs -> wal [label="2 append+sync"];
+  rs -> ms [label="3 insert"];
+  rs -> c [label="4 ack", style=dashed];
+  ms -> hf [label="5 flush (later)"];
+  wal -> sec [label="6 async replay", style=dashed];
+}

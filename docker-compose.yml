@@ -1,0 +1,212 @@
+name: hw3
+
+x-zk: &zk
+  image: zookeeper:3.8.4
+  environment: &zk-env
+    ZOO_SERVERS: server.1=zk1:2888:3888;2181 server.2=zk2:2888:3888;2181 server.3=zk3:2888:3888;2181
+  healthcheck:
+    test: ["CMD-SHELL", "zkServer.sh status"]
+    interval: 5s
+    timeout: 10s
+    retries: 30
+
+x-node: &node
+  image: hw3/hbase-node:2.6.7
+  pull_policy: never
+  volumes:
+    - ./conf/core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml:ro
+    - ./conf/hdfs-site.xml:/opt/hadoop/etc/hadoop/hdfs-site.xml:ro
+    - ./conf/hbase-site.xml:/opt/hbase/conf/hbase-site.xml:ro
+
+x-datanode: &datanode
+  <<: *node
+  command: datanode
+  environment:
+    HADOOP_HEAPSIZE_MAX: 256m
+  depends_on:
+    namenode: { condition: service_started }
+
+x-master: &master
+  <<: *node
+  command: master
+  environment:
+    HBASE_HEAPSIZE: 512m
+  healthcheck:
+    test: ["CMD-SHELL", "curl -sf http://localhost:16010/ > /dev/null"]
+    interval: 5s
+    timeout: 5s
+    retries: 60
+  depends_on:
+    zk1: { condition: service_healthy }
+    zk2: { condition: service_healthy }
+    zk3: { condition: service_healthy }
+    namenode: { condition: service_healthy }
+
+x-rs: &rs
+  <<: *node
+  command: regionserver
+  environment:
+    HBASE_HEAPSIZE: 768m
+  healthcheck:
+    test: ["CMD-SHELL", "curl -sf http://localhost:16030/ > /dev/null"]
+    interval: 5s
+    timeout: 5s
+    retries: 60
+  depends_on:
+    hmaster1: { condition: service_healthy }
+
+services:
+  # ---------- ZooKeeper ensemble (Zab): HBase coordination ----------
+  zk1:
+    <<: *zk
+    container_name: zk1
+    hostname: zk1
+    environment: { <<: *zk-env, ZOO_MY_ID: 1 }
+    volumes: [zk1_data:/data, zk1_log:/datalog]
+  zk2:
+    <<: *zk
+    container_name: zk2
+    hostname: zk2
+    environment: { <<: *zk-env, ZOO_MY_ID: 2 }
+    volumes: [zk2_data:/data, zk2_log:/datalog]
+  zk3:
+    <<: *zk
+    container_name: zk3
+    hostname: zk3
+    environment: { <<: *zk-env, ZOO_MY_ID: 3 }
+    volumes: [zk3_data:/data, zk3_log:/datalog]
+
+  # ---------- HDFS: durable storage for WAL files and HFiles ----------
+  namenode:
+    <<: *node
+    build: ./docker
+    container_name: namenode
+    hostname: namenode
+    command: namenode
+    environment:
+      HADOOP_HEAPSIZE_MAX: 256m
+    ports: ["9870:9870"]
+    volumes:
+      - ./conf/core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml:ro
+      - ./conf/hdfs-site.xml:/opt/hadoop/etc/hadoop/hdfs-site.xml:ro
+      - nn_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s 'http://localhost:9870/jmx?qry=Hadoop:service=NameNode,name=FSNamesystemState' | grep -Eq '\"NumLiveDataNodes\" *: *3'"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+  datanode1:
+    <<: *datanode
+    container_name: datanode1
+    hostname: datanode1
+    volumes:
+      - ./conf/core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml:ro
+      - ./conf/hdfs-site.xml:/opt/hadoop/etc/hadoop/hdfs-site.xml:ro
+      - dn1_data:/data
+  datanode2:
+    <<: *datanode
+    container_name: datanode2
+    hostname: datanode2
+    volumes:
+      - ./conf/core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml:ro
+      - ./conf/hdfs-site.xml:/opt/hadoop/etc/hadoop/hdfs-site.xml:ro
+      - dn2_data:/data
+  datanode3:
+    <<: *datanode
+    container_name: datanode3
+    hostname: datanode3
+    volumes:
+      - ./conf/core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml:ro
+      - ./conf/hdfs-site.xml:/opt/hadoop/etc/hadoop/hdfs-site.xml:ro
+      - dn3_data:/data
+
+  # ---------- HBase masters: one active, one backup (elected through ZooKeeper) ----------
+  hmaster1:
+    <<: *master
+    container_name: hmaster1
+    hostname: hmaster1
+    ports: ["16010:16010"]
+  hmaster2:
+    <<: *master
+    container_name: hmaster2
+    hostname: hmaster2
+    ports: ["16011:16010"]
+    depends_on:
+      hmaster1: { condition: service_healthy }
+
+  # ---------- RegionServers: serve reads and writes ----------
+  rs1:
+    <<: *rs
+    container_name: rs1
+    hostname: rs1
+    ports: ["16030:16030"]
+  rs2:
+    <<: *rs
+    container_name: rs2
+    hostname: rs2
+    ports: ["16031:16030"]
+  rs3:
+    <<: *rs
+    container_name: rs3
+    hostname: rs3
+    ports: ["16032:16030"]
+
+  # ---------- Thrift gateway: lets the Python clients talk to HBase ----------
+  thrift:
+    <<: *node
+    container_name: thrift
+    hostname: thrift
+    command: thrift
+    environment:
+      HBASE_HEAPSIZE: 384m
+    volumes:
+      - ./conf/thrift-site.xml:/opt/hbase/conf/hbase-site.xml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 9090"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+    depends_on:
+      rs1: { condition: service_healthy }
+      rs2: { condition: service_healthy }
+      rs3: { condition: service_healthy }
+
+  # ---------- one-shot job: creates the 'orders' table ----------
+  init:
+    <<: *node
+    container_name: init
+    command: init
+    volumes:
+      - ./conf/core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml:ro
+      - ./conf/hdfs-site.xml:/opt/hadoop/etc/hadoop/hdfs-site.xml:ro
+      - ./conf/hbase-site.xml:/opt/hbase/conf/hbase-site.xml:ro
+      - ./docker/init-table.sh:/opt/hw3/init-table.sh:ro
+      - ./docker/create_table.rb:/opt/hw3/create_table.rb:ro
+    depends_on:
+      thrift: { condition: service_healthy }
+
+  # ---------- Python workload tools (docker compose run --rm client ...) ----------
+  client:
+    build: ./client
+    image: hw3/client:1.0
+    profiles: ["tools"]
+    working_dir: /app
+    volumes:
+      - ./client:/app
+      - ./results:/results
+
+networks:
+  default:
+    name: hw3net
+
+volumes:
+  zk1_data:
+  zk1_log:
+  zk2_data:
+  zk2_log:
+  zk3_data:
+  zk3_log:
+  nn_data:
+  dn1_data:
+  dn2_data:
+  dn3_data:

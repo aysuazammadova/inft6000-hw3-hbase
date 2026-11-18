@@ -1,0 +1,81 @@
+digraph HBaseCluster {
+  graph [rankdir=TB, fontname="Helvetica", fontsize=22, labelloc=t, nodesep=0.35, ranksep=0.7, pad=0.4,
+         label=<<b>Container diagram - Distributed Apache HBase Cluster (C4 level 2)</b><br/> >];
+  node  [shape=box, style="rounded,filled", fillcolor="#3c78d8", color="#2a5aa8", fontcolor=white,
+         fontname="Helvetica", fontsize=13, margin="0.2,0.12", width=2.6];
+  edge  [color="#666666", fontcolor="#555555", fontname="Helvetica", fontsize=11, arrowsize=0.8];
+
+  operator [shape=box, style="rounded,filled", fillcolor="#444b55", color="#333333",
+            label=<<b>Operator</b><br/><font point-size="11">team member running<br/>tests and watching the cluster</font>>];
+
+  subgraph cluster_system {
+    label=<<b>Distributed HBase Cluster</b> <i><font point-size="12">[software system]</font></i>>;
+    style="dashed,rounded"; color="#444444"; fontsize=15;
+
+    subgraph cluster_host {
+      label=<<font color="#2a5aa8"><b>Host machine</b> <i><font point-size="12">[outside Docker]</font></i></font>>;
+      style="dashed,rounded"; color="#3c78d8";
+      scripts [label=<<b>Status &amp; chaos scripts</b><br/><font point-size="11"><i>[bash, Docker CLI]</i><br/>status.sh, chaos.sh<br/>docker kill / network disconnect</font>>];
+    }
+
+    subgraph cluster_docker {
+      label=<<font color="#e07b28"><b>Docker host</b> <i><font point-size="12">[docker-compose.yml, network hw3net]</font></i></font>>;
+      style="dashed,rounded"; color="#e69138"; bgcolor="#fdf7f0";
+
+      tools [label=<<b>Workload &amp; test tools</b><br/><font point-size="11"><i>[Python 3, thrift]</i><br/>bench, traffic (8 workers),<br/>verify, durability_test</font>>];
+      thrift [label=<<b>Thrift2 gateway</b><br/><font point-size="11"><i>[HBase 2.6.7, :9090]</i><br/>stateless HBase client</font>>];
+
+      subgraph cluster_zk {
+        label=<<b>ZooKeeper ensemble</b> <i><font point-size="11">[3 nodes, Zab, quorum = 2]</font></i>>;
+        style="dotted,rounded"; color="#444444"; bgcolor="#f3f6fc";
+        zk [shape=box, fillcolor="#1f2430", color="#1f2430",
+            label=<<b>zk1 · zk2 · zk3</b><br/><font point-size="11"><i>[ZooKeeper 3.8.4]</i><br/>1 leader + 2 followers<br/>/hbase/master lock, /hbase/rs/* ephemeral nodes,<br/>hbase:meta location</font>>];
+      }
+
+      subgraph cluster_masters {
+        label=<<b>HBase masters</b> <i><font point-size="11">[control plane only]</font></i>>;
+        style="dotted,rounded"; color="#444444"; bgcolor="#f3f6fc";
+        hm1 [label=<<b>hmaster1</b><br/><font point-size="11"><i>[active, UI :16010]</i><br/>region assignment,<br/>crash recovery (WAL split)</font>>];
+        hm2 [label=<<b>hmaster2</b><br/><font point-size="11"><i>[backup, UI :16011]</i><br/>waits on /hbase/master</font>>];
+      }
+
+      subgraph cluster_rs {
+        label=<<b>RegionServers</b> <i><font point-size="11">[table orders: 8 regions x 3 replicas]</font></i>>;
+        style="dotted,rounded"; color="#444444"; bgcolor="#f3f6fc";
+        rs1 [label=<<b>rs1</b><br/><font point-size="11"><i>[HBase 2.6.7]</i><br/>primary for ~1/3 of regions<br/>secondary for the rest</font>>];
+        rs2 [label=<<b>rs2</b><br/><font point-size="11"><i>[HBase 2.6.7]</i><br/>primary for ~1/3 of regions<br/>secondary for the rest</font>>];
+        rs3 [label=<<b>rs3</b><br/><font point-size="11"><i>[HBase 2.6.7]</i><br/>primary for ~1/3 of regions<br/>secondary for the rest</font>>];
+      }
+
+      subgraph cluster_hdfs {
+        label=<<b>HDFS</b> <i><font point-size="11">[Hadoop 3.4.3, replication factor 3]</font></i>>;
+        style="dotted,rounded"; color="#444444"; bgcolor="#f3f6fc";
+        nn [label=<<b>namenode</b><br/><font point-size="11"><i>[UI :9870]</i><br/>file → block map,<br/>WAL lease recovery (fencing)</font>>];
+        dn [label=<<b>datanode1 · 2 · 3</b><br/><font point-size="11">WAL files + HFiles,<br/>each block on 3 nodes</font>>];
+        vol [shape=cylinder, style=filled, fillcolor="#e6e6e6", color="#888888", fontcolor="#333333", width=1.8,
+             label=<<font point-size="11">one Docker volume per node</font>>];
+      }
+    }
+  }
+
+  operator -> scripts [label="runs"];
+  scripts -> tools [label="docker compose run"];
+  scripts -> rs2 [label="fault injection", style=dashed, color="#cc0000", fontcolor="#cc0000"];
+  tools -> thrift [label="put / get\nSYNC_WAL | ASYNC_WAL | SKIP_WAL\nSTRONG | TIMELINE"];
+  thrift -> zk [label="locate hbase:meta"];
+  thrift -> rs1 [label="HBase RPC :16020"];
+  thrift -> rs2;
+  thrift -> rs3;
+  rs1 -> zk [dir=both, label="session heartbeat"];
+  hm1 -> zk [dir=both, label="leader lock"];
+  hm2 -> zk [dir=both];
+  hm1 -> rs1 [label="assign / reassign regions"];
+  rs1 -> nn [label="WAL append + sync,\nflush HFiles"];
+  rs2 -> nn;
+  rs3 -> nn;
+  rs1 -> rs3 [label="async WAL replication\nto secondaries", style=dashed, constraint=false];
+
+
+  dn -> nn [label="heartbeats,\nblock reports"];
+  dn -> vol [arrowhead=none];
+}
